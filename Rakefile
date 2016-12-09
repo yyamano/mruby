@@ -34,17 +34,24 @@ task :default => :all
 
 bin_path = ENV['INSTALL_DIR'] || "#{MRUBY_ROOT}/bin"
 FileUtils.mkdir_p bin_path, { :verbose => $verbose }
+depfiles = {}
 
-depfiles = MRuby.targets['host'].bins.map do |bin|
-  install_path = MRuby.targets['host'].exefile("#{bin_path}/#{bin}")
-  source_path = MRuby.targets['host'].exefile("#{MRuby.targets['host'].build_dir}/bin/#{bin}")
-
-  file install_path => source_path do |t|
-    FileUtils.rm_f t.name, { :verbose => $verbose }
-    FileUtils.cp t.prerequisites.first, t.name, { :verbose => $verbose }
+MRuby.each_target do |target|
+  if target == MRuby.targets['host']
+    depfiles[target.name] = target.bins.map do |bin|
+      install_path = target.exefile("#{bin_path}/#{bin}")
+      source_path = target.exefile("#{target.build_dir}/bin/#{bin}")
+      file install_path => source_path do |t|
+        FileUtils.rm_f t.name, { :verbose => $verbose }
+        FileUtils.cp t.prerequisites.first, t.name, { :verbose => $verbose }
+      end
+      install_path
+    end
+  else
+    # host is a special target build mrbc
+    depfiles[target.name] = depfiles['host'] 
+    depfiles[target.name] += target.bins.map { |bin| target.exefile("#{target.build_dir}/bin/#{bin}") }
   end
-
-  install_path
 end
 
 MRuby.each_target do |target|
@@ -77,7 +84,7 @@ MRuby.each_target do |target|
           FileUtils.rm_f t.name, { :verbose => $verbose }
           FileUtils.cp t.prerequisites.first, t.name, { :verbose => $verbose }
         end
-        depfiles += [ install_path ]
+        depfiles[target.name] += [ install_path ]
       elsif target == MRuby.targets['host-debug']
         unless MRuby.targets['host'].gems.map {|g| g.bins}.include?([bin])
           install_path = MRuby.targets['host-debug'].exefile("#{bin_path}/#{bin}")
@@ -86,29 +93,33 @@ MRuby.each_target do |target|
             FileUtils.rm_f t.name, { :verbose => $verbose }
             FileUtils.cp t.prerequisites.first, t.name, { :verbose => $verbose }
           end
-          depfiles += [ install_path ]
+          depfiles[target.name] += [ install_path ]
         end
       else
-        depfiles += [ exec ]
+        depfiles[target.name] += [ exec ]
       end
     end
   end
 end
 
-depfiles += MRuby.targets.map { |n, t|
-  [t.libfile("#{t.build_dir}/lib/libmruby")]
-}.flatten
-
-depfiles += MRuby.targets.reject { |n, t| n == 'host' }.map { |n, t|
-  t.bins.map { |bin| t.exefile("#{t.build_dir}/bin/#{bin}") }
-}.flatten
+MRuby.each_target do |target|
+  depfiles[target.name] += [target.libfile("#{target.build_dir}/lib/libmruby")]
+end
 
 desc "build all targets, install (locally) in-repo"
-task :all => depfiles do
+task :all => depfiles.values.flatten do
   puts
   puts "Build summary:"
   puts
-  MRuby.each_target do
+  print_build_summary
+end
+
+MRuby.each_target do |target|
+  desc "build #{target.name} target, install (locally) in-repo"
+  task "build_#{target.name}" => depfiles[target.name] do
+    puts
+    puts "Build summary:"
+    puts
     print_build_summary
   end
 end
@@ -125,7 +136,7 @@ task :clean do
   MRuby.each_target do |t|
     FileUtils.rm_rf t.build_dir, { :verbose => $verbose }
   end
-  FileUtils.rm_f depfiles, { :verbose => $verbose }
+  FileUtils.rm_f depfiles.values.flatten, { :verbose => $verbose }
   puts "Cleaned up target build folder"
 end
 
