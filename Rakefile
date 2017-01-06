@@ -111,7 +111,9 @@ task :all => depfiles.values.flatten do
   puts
   puts "Build summary:"
   puts
-  print_build_summary
+  MRuby.each_target do
+    print_build_summary
+  end
 end
 
 MRuby.each_target do |target|
